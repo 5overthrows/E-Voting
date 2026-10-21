@@ -1,0 +1,46 @@
+# Report files and documentation drafts
+Report files/
+*.docx
+*.pdf
+PROJECT_REPORT.md
+build_full_report.py
+build_report_sections.py
+generate_all.py
+generate_markdown_report.py
+__pycache__/
+*.pyc
+
+# Binaries and executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+backend/evoting.exe
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+backend/evoting.db
+backend/test_evoting.db
+backend/backups/
+
+# Node dependencies and build artifacts
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+dist/
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# Environment variables
+.env
+.env.local
