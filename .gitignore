@@ -44,3 +44,9 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# Runtime generated keys, backups, and local scratch
+backend/system_authority_keys.json
+backend/tamper_backups.json
+scratch/
+

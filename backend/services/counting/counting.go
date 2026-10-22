@@ -1,13 +1,18 @@
 package counting
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"evoting/services/auth"
+	"evoting/services/demo"
 	"evoting/shared/crypto"
 	"evoting/shared/db"
 	"evoting/shared/merkle"
@@ -17,19 +22,40 @@ import (
 	"github.com/google/uuid"
 )
 
-// System-wide RSA keypair for signing Merkle roots (for prototype ease-of-use)
+// System-wide RSA keypair for signing Merkle roots
+const systemKeysFile = "system_authority_keys.json"
+
+type SystemKeys struct {
+	PublicKey  string `json:"public_key"`
+	PrivateKey string `json:"private_key"`
+}
+
 var (
 	systemPrivateKeyPEM string
 	systemPublicKeyPEM  string
 )
 
 func init() {
+	if data, err := os.ReadFile(systemKeysFile); err == nil {
+		var keys SystemKeys
+		if err := json.Unmarshal(data, &keys); err == nil && keys.PublicKey != "" && keys.PrivateKey != "" {
+			systemPublicKeyPEM = keys.PublicKey
+			systemPrivateKeyPEM = keys.PrivateKey
+			return
+		}
+	}
+
 	pub, priv, err := crypto.GenerateRSAKeypair()
 	if err != nil {
 		log.Fatalf("Failed to initialize system keys: %v", err)
 	}
 	systemPublicKeyPEM = pub
 	systemPrivateKeyPEM = priv
+
+	data, err := json.Marshal(SystemKeys{PublicKey: pub, PrivateKey: priv})
+	if err == nil {
+		_ = os.WriteFile(systemKeysFile, data, 0644)
+	}
 }
 
 type CreateElectionRequest struct {
@@ -313,18 +339,33 @@ func closeElection(c *gin.Context) {
 		return
 	}
 
-	// 2. Compute final Merkle Root and digitally sign it (REQ-MRK-3)
+	// 2. Check for tampering before closing
+	if demo.IsElectionTampered(id) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot close election: Active database tampering detected! Restore ledger integrity first."})
+		return
+	}
+
+	// 3. Compute final Merkle Root and digitally sign it (REQ-MRK-3)
 	var leaves []string
-	vRows, err := db.DB.Query("SELECT MerkleLeafHash FROM Votes WHERE ElectionID = $1 ORDER BY Timestamp ASC", id)
+	vRows, err := db.DB.Query("SELECT EncryptedBallot, MerkleLeafHash FROM Votes WHERE ElectionID = $1 ORDER BY Timestamp ASC", id)
 	if err != nil {
-		vRows, err = db.DB.Query("SELECT MerkleLeafHash FROM Votes WHERE ElectionID = ? ORDER BY Timestamp ASC", id)
+		vRows, err = db.DB.Query("SELECT EncryptedBallot, MerkleLeafHash FROM Votes WHERE ElectionID = ? ORDER BY Timestamp ASC", id)
 	}
 
 	if err == nil {
 		defer vRows.Close()
 		for vRows.Next() {
-			var lh string
-			if err := vRows.Scan(&lh); err == nil {
+			var eb, lh string
+			if err := vRows.Scan(&eb, &lh); err == nil {
+				if strings.HasPrefix(lh, "0000tampered") || eb == "MALICIOUS_TAMPER_MODIFIED_PAYLOAD_BY_INSIDER_ATTACKER" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot close election: Malicious tamper payload found in votes! Restore ledger integrity first."})
+					return
+				}
+				expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(eb)))
+				if expectedHash != lh {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot close election: Cryptographic leaf hash mismatch found! Restore ledger integrity first."})
+					return
+				}
 				leaves = append(leaves, lh)
 			}
 		}
@@ -372,18 +413,25 @@ func verifyMerkle(c *gin.Context) {
 		return
 	}
 
-	// Retrieve leaves
+	// Retrieve leaves and verify cryptographic binding of ballot ciphertexts
+	type BallotCheck struct {
+		EncryptedBallot string
+		MerkleLeafHash  string
+	}
+	var ballots []BallotCheck
 	var leaves []string
-	vRows, err := db.DB.Query("SELECT MerkleLeafHash FROM Votes WHERE ElectionID = $1 ORDER BY Timestamp ASC", id)
+
+	vRows, err := db.DB.Query("SELECT EncryptedBallot, MerkleLeafHash FROM Votes WHERE ElectionID = $1 ORDER BY Timestamp ASC", id)
 	if err != nil {
-		vRows, err = db.DB.Query("SELECT MerkleLeafHash FROM Votes WHERE ElectionID = ? ORDER BY Timestamp ASC", id)
+		vRows, err = db.DB.Query("SELECT EncryptedBallot, MerkleLeafHash FROM Votes WHERE ElectionID = ? ORDER BY Timestamp ASC", id)
 	}
 
 	if err == nil {
 		defer vRows.Close()
 		for vRows.Next() {
-			var lh string
-			if err := vRows.Scan(&lh); err == nil {
+			var eb, lh string
+			if err := vRows.Scan(&eb, &lh); err == nil {
+				ballots = append(ballots, BallotCheck{EncryptedBallot: eb, MerkleLeafHash: lh})
 				leaves = append(leaves, lh)
 			}
 		}
@@ -391,27 +439,62 @@ func verifyMerkle(c *gin.Context) {
 
 	computedRoot := merkle.ComputeMerkleRoot(leaves)
 
+	// Check if any ballot ciphertext or leaf hash has been tampered with
+	isTampered := demo.IsElectionTampered(id)
+	tamperReason := ""
+	if isTampered {
+		tamperReason = "🚨 TAMPER DETECTED: Active tampering simulation flag detected on election ledger!"
+	}
+
+	for idx, b := range ballots {
+		if strings.HasPrefix(b.MerkleLeafHash, "0000tampered") || b.EncryptedBallot == "MALICIOUS_TAMPER_MODIFIED_PAYLOAD_BY_INSIDER_ATTACKER" {
+			isTampered = true
+			tamperReason = fmt.Sprintf("🚨 TAMPER DETECTED: Ballot #%d contains malicious tamper payload or invalid leaf signature!", idx+1)
+			break
+		}
+		expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte(b.EncryptedBallot)))
+		if expectedHash != b.MerkleLeafHash {
+			isTampered = true
+			tamperReason = fmt.Sprintf("🚨 TAMPER DETECTED: Ballot #%d ciphertext hash mismatch! Expected %s..., found %s...", idx+1, expectedHash[:12], b.MerkleLeafHash[:12])
+			break
+		}
+	}
+
+	if isTampered {
+		c.JSON(http.StatusOK, gin.H{
+			"status":             "tampered",
+			"ballots_count":      len(leaves),
+			"leaves":             leaves,
+			"computed_root":      computedRoot,
+			"signed_merkle_root": signedRoot.String,
+			"verification_pass":  false,
+			"message":            tamperReason,
+		})
+		db.LogEvent("WARNING: Merkle integrity check failed for election: "+id, "System", c.ClientIP())
+		return
+	}
+
 	if status != "Closed" && status != "Archived" {
 		c.JSON(http.StatusOK, gin.H{
-			"status":            "in_progress",
-			"ballots_count":     len(leaves),
-			"leaves":            leaves,
-			"computed_root":     computedRoot,
+			"status":             "verified",
+			"ballots_count":      len(leaves),
+			"leaves":             leaves,
+			"computed_root":      computedRoot,
 			"signed_merkle_root": signedRoot.String,
-			"verification_pass": true,
-			"message":           "Election is active; Merkle root represents active state.",
+			"verification_pass":  true,
+			"message":            "Active Election: All encrypted ballot leaf hashes cryptographically verified against ledger.",
 		})
 		return
 	}
 
 	if !signedRoot.Valid || signedRoot.String == "" {
 		c.JSON(http.StatusOK, gin.H{
-			"status":            "error",
-			"ballots_count":     len(leaves),
-			"leaves":            leaves,
-			"computed_root":     computedRoot,
-			"verification_pass": false,
-			"message":           "No signed Merkle Root archived for this closed election.",
+			"status":             "error",
+			"ballots_count":      len(leaves),
+			"leaves":             leaves,
+			"computed_root":      computedRoot,
+			"verification_pass":  false,
+			"message":            "No signed Merkle Root archived for this closed election.",
 		})
 		return
 	}
@@ -420,13 +503,13 @@ func verifyMerkle(c *gin.Context) {
 	err = crypto.VerifyRSASignature(systemPublicKeyPEM, []byte(computedRoot), signedRoot.String)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"status":            "tampered",
-			"ballots_count":     len(leaves),
-			"leaves":            leaves,
-			"computed_root":     computedRoot,
+			"status":             "tampered",
+			"ballots_count":      len(leaves),
+			"leaves":             leaves,
+			"computed_root":      computedRoot,
 			"signed_merkle_root": signedRoot.String,
-			"verification_pass": false,
-			"message":           "WARNING: Merkle root signature verification failed. Ledger has been modified!",
+			"verification_pass":  false,
+			"message":            "WARNING: Merkle root signature verification failed. Ledger has been modified!",
 		})
 		db.LogEvent("WARNING: Merkle integrity check failed for election: "+id, "System", c.ClientIP())
 		return

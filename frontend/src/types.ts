@@ -1,3 +1,5 @@
+export type Persona = 'voter1' | 'voter2' | 'voter3' | 'voter4' | 'officer1' | 'counting1' | 'admin1';
+
 export interface User {
   user_id: string;
   name: string;

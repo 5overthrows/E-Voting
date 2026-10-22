@@ -4,7 +4,7 @@ import type { MerkleStatus } from '../types';
 interface MerkleTreeVisualizerProps {
   electionId: string;
   status: MerkleStatus | null;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   token: string | null;
 }
 
@@ -14,10 +14,20 @@ export const MerkleTreeVisualizer: React.FC<MerkleTreeVisualizerProps> = ({
   onRefresh,
 }) => {
   const [tampering, setTampering] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [tamperActionMsg, setTamperActionMsg] = useState<string | null>(null);
   const [selectedLeaf, setSelectedLeaf] = useState<string | null>(null);
 
   const leaves = status?.leaves || [];
+
+  const handleReVerify = async () => {
+    setVerifying(true);
+    try {
+      await onRefresh();
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const handleSimulateTamper = async () => {
     setTampering(true);
@@ -31,7 +41,7 @@ export const MerkleTreeVisualizer: React.FC<MerkleTreeVisualizerProps> = ({
       const data = await resp.json();
       if (resp.ok) {
         setTamperActionMsg('⚠️ Malicious modification injected into Votes table! Re-verify to see cryptographic detection.');
-        onRefresh();
+        await onRefresh();
       } else {
         setTamperActionMsg(data.error || 'Failed to simulate tamper.');
       }
@@ -54,7 +64,7 @@ export const MerkleTreeVisualizer: React.FC<MerkleTreeVisualizerProps> = ({
       const data = await resp.json();
       if (resp.ok) {
         setTamperActionMsg('✅ Database restored to authentic state! Merkle tree integrity is back to 100%.');
-        onRefresh();
+        await onRefresh();
       } else {
         setTamperActionMsg(data.error || 'Failed to restore ledger.');
       }
@@ -102,12 +112,13 @@ export const MerkleTreeVisualizer: React.FC<MerkleTreeVisualizerProps> = ({
             </span>
           )}
           <button 
-            onClick={onRefresh} 
+            onClick={handleReVerify} 
+            disabled={verifying}
             className="btn btn-secondary" 
-            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', opacity: verifying ? 0.7 : 1 }}
             data-testid="btn-refresh-merkle"
           >
-            Re-Verify
+            {verifying ? '🔄 Verifying...' : 'Re-Verify'}
           </button>
         </div>
       </div>
@@ -167,13 +178,16 @@ export const MerkleTreeVisualizer: React.FC<MerkleTreeVisualizerProps> = ({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.8rem' }}>
             {leaves.map((leaf, idx) => {
               const isSelected = selectedLeaf === leaf;
+              const isLeafTampered = leaf.startsWith('0000tampered');
               return (
                 <div
                   key={idx}
                   onClick={() => setSelectedLeaf(isSelected ? null : leaf)}
                   style={{
-                    background: isSelected ? 'rgba(139, 92, 246, 0.15)' : 'rgba(0,0,0,0.2)',
-                    border: `1px solid ${isSelected ? 'var(--primary)' : 'var(--glass-border)'}`,
+                    background: isLeafTampered 
+                      ? 'rgba(239, 68, 68, 0.25)' 
+                      : isSelected ? 'rgba(139, 92, 246, 0.15)' : 'rgba(0,0,0,0.2)',
+                    border: `1px solid ${isLeafTampered ? 'var(--error)' : isSelected ? 'var(--primary)' : 'var(--glass-border)'}`,
                     borderRadius: '8px',
                     padding: '0.8rem',
                     cursor: 'pointer',
@@ -182,14 +196,21 @@ export const MerkleTreeVisualizer: React.FC<MerkleTreeVisualizerProps> = ({
                   data-testid={`merkle-leaf-${idx}`}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--secondary)' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: isLeafTampered ? 'var(--error)' : 'var(--secondary)' }}>
                       Leaf #{idx + 1}
                     </span>
-                    <span style={{ fontSize: '0.65rem', background: 'rgba(255,255,255,0.05)', padding: '2px 5px', borderRadius: '4px' }}>
-                      SHA-256
+                    <span style={{ 
+                      fontSize: '0.65rem', 
+                      background: isLeafTampered ? 'var(--error)' : 'rgba(255,255,255,0.05)', 
+                      color: isLeafTampered ? '#ffffff' : 'inherit',
+                      padding: '2px 5px', 
+                      borderRadius: '4px',
+                      fontWeight: isLeafTampered ? 700 : 400
+                    }}>
+                      {isLeafTampered ? 'TAMPERED' : 'SHA-256'}
                     </span>
                   </div>
-                  <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                  <div style={{ fontFamily: 'monospace', fontSize: '0.75rem', color: isLeafTampered ? '#fca5a5' : 'var(--text-primary)', wordBreak: 'break-all' }}>
                     {leaf.slice(0, 16)}...{leaf.slice(-8)}
                   </div>
                 </div>

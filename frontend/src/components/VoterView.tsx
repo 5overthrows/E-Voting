@@ -12,6 +12,7 @@ interface VoterViewProps {
   candidates: Candidate[];
   selectedElection: Election | null;
   activeScreen: string;
+  talliedResults?: any[];
   onBackToElections: () => void;
 }
 
@@ -26,6 +27,7 @@ export const VoterView: React.FC<VoterViewProps> = ({
   candidates,
   selectedElection,
   activeScreen,
+  talliedResults = [],
   onBackToElections,
 }) => {
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
@@ -130,8 +132,103 @@ export const VoterView: React.FC<VoterViewProps> = ({
         </div>
       )}
 
-      {/* SCREEN: BALLOT CANDIDATE SELECTION */}
-      {activeScreen === 'ballot' && selectedElection ? (
+      {/* SCREEN: TALLY RESULTS */}
+      {activeScreen === 'results' && selectedElection ? (
+        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <button onClick={onBackToElections} className="btn btn-secondary" style={{ padding: '0.5rem 1rem' }} data-testid="btn-back-to-elections">
+                ← Back
+              </button>
+              <div>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>CERTIFIED ELECTION RESULTS</span>
+                <h2 style={{ fontSize: '1.5rem' }}>{selectedElection.title}</h2>
+              </div>
+            </div>
+            <span className="user-badge badge-officer">
+              {selectedElection.status}
+            </span>
+          </div>
+
+          <div className="glass-card" style={{ padding: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.8rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.25rem' }}>Official Ballots Count</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.2rem' }}>
+                  {selectedElection.description}
+                </p>
+              </div>
+              {talliedResults && talliedResults.length > 0 && (
+                <span className="user-badge status-success" style={{ fontSize: '0.9rem', padding: '0.4rem 0.8rem' }}>
+                  {talliedResults.reduce((acc: number, r: any) => acc + (r.votes || 0), 0)} Total Votes
+                </span>
+              )}
+            </div>
+
+            {selectedElection.signed_merkle_root && (
+              <div style={{ marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+                <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>ARCHIVED SIGNED MERKLE ROOT:</span>
+                <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.6rem', borderRadius: '6px', fontFamily: 'monospace', overflowX: 'auto', marginTop: '0.3rem', border: '1px solid var(--glass-border)' }}>
+                  {selectedElection.signed_merkle_root}
+                </div>
+              </div>
+            )}
+
+            {talliedResults && talliedResults.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {(() => {
+                  const totalVotes = talliedResults.reduce((acc: number, r: any) => acc + (r.votes || 0), 0);
+                  return talliedResults.map((res: any, idx: number) => {
+                    const percentage = totalVotes > 0 ? Math.round((res.votes / totalVotes) * 100) : 0;
+                    return (
+                      <div 
+                        key={res.candidate_id || idx} 
+                        style={{ background: 'rgba(255,255,255,0.02)', padding: '1.2rem', borderRadius: '8px', border: '1px solid var(--glass-border)' }}
+                        data-testid={`voter-tally-row-${idx}`}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
+                          <div>
+                            <span style={{ fontWeight: 700, fontSize: '1.15rem' }}>{res.candidate_name}</span>
+                            <span style={{ color: 'var(--secondary)', fontSize: '0.9rem', marginLeft: '0.6rem' }}>({res.party})</span>
+                          </div>
+                          <div style={{ fontWeight: 800, fontSize: '1.25rem', color: 'var(--primary)' }}>
+                            {res.votes} <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>({percentage}%)</span>
+                          </div>
+                        </div>
+
+                        {/* PROGRESS BAR */}
+                        <div style={{ width: '100%', height: '10px', background: 'rgba(0,0,0,0.3)', borderRadius: '9999px', overflow: 'hidden' }}>
+                          <div 
+                            style={{ 
+                              width: `${percentage}%`, 
+                              height: '100%', 
+                              background: 'linear-gradient(90deg, var(--primary), var(--secondary))',
+                              transition: 'width 0.5s ease',
+                            }} 
+                          />
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
+                <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>📊 No tally results available yet.</p>
+                <p style={{ fontSize: '0.9rem' }}>
+                  This election may have had no votes recorded, or the Counting Authority has not decrypted and archived the results yet.
+                </p>
+              </div>
+            )}
+
+            <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-start' }}>
+              <button onClick={onBackToElections} className="btn btn-secondary">
+                ← Back to Available Elections
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : activeScreen === 'ballot' && selectedElection ? (
         <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>

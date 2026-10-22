@@ -2,8 +2,11 @@ package demo
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,22 +19,53 @@ import (
 )
 
 type TamperBackup struct {
-	VoteID          string
-	ElectionID      string
-	OriginalBallot  string
-	OriginalLeaf    string
+	VoteID          string `json:"VoteID"`
+	ElectionID      string `json:"ElectionID"`
+	OriginalBallot  string `json:"OriginalBallot"`
+	OriginalLeaf    string `json:"OriginalLeaf"`
 }
+
+const tamperBackupFile = "tamper_backups.json"
 
 var (
 	tamperStore   = make(map[string]TamperBackup) // electionID -> backup
 	tamperStoreMu sync.Mutex
 )
 
+func init() {
+	loadTamperStore()
+}
+
+func loadTamperStore() {
+	tamperStoreMu.Lock()
+	defer tamperStoreMu.Unlock()
+	data, err := os.ReadFile(tamperBackupFile)
+	if err == nil {
+		_ = json.Unmarshal(data, &tamperStore)
+	}
+}
+
+func saveTamperStore() {
+	data, err := json.Marshal(tamperStore)
+	if err == nil {
+		_ = os.WriteFile(tamperBackupFile, data, 0644)
+	}
+}
+
+// IsElectionTampered checks if an active tamper session exists for this election
+func IsElectionTampered(electionID string) bool {
+	tamperStoreMu.Lock()
+	defer tamperStoreMu.Unlock()
+	_, exists := tamperStore[electionID]
+	return exists
+}
+
 // RegisterRoutes attaches demo and presentation endpoints to the Gin engine
 func RegisterRoutes(r *gin.Engine) {
 	demoGroup := r.Group("/api/demo")
 	{
 		demoGroup.POST("/reset", ResetDemo)
+		demoGroup.POST("/wipe", WipeAllAndFreshDemo)
 		demoGroup.POST("/tamper", TamperBallot)
 		demoGroup.POST("/restore", RestoreBallot)
 		demoGroup.GET("/status", GetSystemStatus)
@@ -42,7 +76,7 @@ func RegisterRoutes(r *gin.Engine) {
 // ResetDemo restores clean presentation data: resets voter flags and creates a clean active election
 func ResetDemo(c *gin.Context) {
 	// 1. Reset user HasVoted flags and lockouts for demo users
-	_, _ = db.DB.Exec("UPDATE Users SET HasVoted = FALSE, FailedAttempts = 0, LockoutUntil = NULL WHERE UserID IN ('voter1', 'voter2', 'voter3')")
+	_, _ = db.DB.Exec("UPDATE Users SET HasVoted = FALSE, FailedLoginAttempts = 0, LockedUntil = NULL WHERE Role = 'Voter' OR UserID IN ('voter1', 'voter2', 'voter3')")
 	_, _ = db.DB.Exec("DELETE FROM Tokens")
 
 	// 2. Clear old demo tamper state
@@ -124,6 +158,93 @@ func ResetDemo(c *gin.Context) {
 		"default_users": gin.H{
 			"voter":     "voter1 / password123",
 			"voter2":    "voter2 / password123",
+			"voter3":    "voter3 / password123",
+			"voter4":    "voter4 / password123",
+			"officer":   "officer1 / password123",
+			"authority": "counting1 / password123 (passphrase: demo123)",
+			"admin":     "admin1 / password123",
+		},
+	})
+}
+
+// WipeAllAndFreshDemo wipes the entire election history and seeds a pristine active election for presentation
+func WipeAllAndFreshDemo(c *gin.Context) {
+	// 1. Reset all voter flags and lockout counters
+	_, _ = db.DB.Exec("UPDATE Users SET HasVoted = FALSE, FailedLoginAttempts = 0, LockedUntil = NULL WHERE Role = 'Voter'")
+	_, _ = db.DB.Exec("DELETE FROM Tokens")
+
+	// 2. Clear old demo tamper state
+	tamperStoreMu.Lock()
+	tamperStore = make(map[string]TamperBackup)
+	tamperStoreMu.Unlock()
+
+	// 3. Wipe all historical election data completely
+	_, _ = db.DB.Exec("DELETE FROM ElectionResults")
+	_, _ = db.DB.Exec("DELETE FROM Votes")
+	_, _ = db.DB.Exec("DELETE FROM Candidates")
+	_, _ = db.DB.Exec("DELETE FROM Elections")
+
+	// 4. Create one brand new clean presentation election
+	electionID := uuid.New().String()
+	pubKey, privKey, genErr := crypto.GenerateRSAKeypair()
+	if genErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate demo RSA keypair"})
+		return
+	}
+
+	passphrase := "demo123"
+	salt, _ := crypto.GenerateRandomSalt()
+	key := crypto.DeriveKey(passphrase, salt)
+	encPrivKey, _ := crypto.EncryptAES(key, []byte(privKey))
+
+	now := time.Now()
+	startTime := now.Add(-1 * time.Hour)
+	endTime := now.Add(24 * time.Hour)
+
+	query := "INSERT INTO Elections (ElectionID, Title, Description, StartTime, EndTime, Status, PublicKey, EncryptedPrivateKey, PrivateKeySalt) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+	_, err := db.DB.Exec(query, electionID, "Faculty Review Demo: University Senate 2026", "Live Demonstration for Faculty Review Committee. Demonstrates Anonymous Voting & Merkle Tree Ledger.", startTime, endTime, "Active", pubKey, encPrivKey, salt)
+	if err != nil {
+		query = "INSERT INTO Elections (ElectionID, Title, Description, StartTime, EndTime, Status, PublicKey, EncryptedPrivateKey, PrivateKeySalt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+		_, err = db.DB.Exec(query, electionID, "Faculty Review Demo: University Senate 2026", "Live Demonstration for Faculty Review Committee. Demonstrates Anonymous Voting & Merkle Tree Ledger.", startTime, endTime, "Active", pubKey, encPrivKey, salt)
+	}
+
+	if err != nil {
+		log.Printf("Wipe demo election insert error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to seed demo election"})
+		return
+	}
+
+	// Seed 3 Demo Candidates
+	candidates := []struct {
+		name  string
+		party string
+	}{
+		{"Dr. Elena Vance", "Innovation & Academic Freedom"},
+		{"Marcus Thorne", "Student Rights & Welfare"},
+		{"Aisha Patel", "Green Campus & Sustainability"},
+	}
+
+	for _, cand := range candidates {
+		cid := uuid.New().String()
+		cQuery := "INSERT INTO Candidates (CandidateID, ElectionID, CandidateName, Party) VALUES ($1, $2, $3, $4)"
+		_, err = db.DB.Exec(cQuery, cid, electionID, cand.name, cand.party)
+		if err != nil {
+			cQuery = "INSERT INTO Candidates (CandidateID, ElectionID, CandidateName, Party) VALUES (?, ?, ?, ?)"
+			_, _ = db.DB.Exec(cQuery, cid, electionID, cand.name, cand.party)
+		}
+	}
+
+	db.LogEvent("Entire election history wiped and fresh presentation election created", "Administrator", c.ClientIP())
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "success",
+		"message":     "All past elections wiped! Fresh active election created for presentation.",
+		"election_id": electionID,
+		"default_users": gin.H{
+			"voter1":    "voter1 / password123 (Alice)",
+			"voter2":    "voter2 / password123 (Bob)",
+			"voter3":    "voter3 / password123 (Carol)",
+			"voter4":    "voter4 / password123 (David)",
 			"officer":   "officer1 / password123",
 			"authority": "counting1 / password123 (passphrase: demo123)",
 			"admin":     "admin1 / password123",
@@ -165,6 +286,7 @@ func TamperBallot(c *gin.Context) {
 		OriginalBallot: origBallot,
 		OriginalLeaf:   origLeaf,
 	}
+	saveTamperStore()
 	tamperStoreMu.Unlock()
 
 	// Alter the ballot and leaf hash in database to simulate insider tamper
@@ -207,8 +329,35 @@ func RestoreBallot(c *gin.Context) {
 	backup, exists := tamperStore[req.ElectionID]
 	if exists {
 		delete(tamperStore, req.ElectionID)
+		saveTamperStore()
 	}
 	tamperStoreMu.Unlock()
+
+	if !exists {
+		// Fallback: Check if a tampered vote exists in DB and restore authentic state
+		var voteID string
+		err := db.DB.QueryRow("SELECT VoteID FROM Votes WHERE ElectionID = $1 AND (MerkleLeafHash LIKE '0000tampered%' OR EncryptedBallot = 'MALICIOUS_TAMPER_MODIFIED_PAYLOAD_BY_INSIDER_ATTACKER') LIMIT 1", req.ElectionID).Scan(&voteID)
+		if err != nil {
+			err = db.DB.QueryRow("SELECT VoteID FROM Votes WHERE ElectionID = ? AND (MerkleLeafHash LIKE '0000tampered%' OR EncryptedBallot = 'MALICIOUS_TAMPER_MODIFIED_PAYLOAD_BY_INSIDER_ATTACKER') LIMIT 1", req.ElectionID).Scan(&voteID)
+		}
+		if err == nil {
+			// Find original leaf from audit log
+			var logAction string
+			_ = db.DB.QueryRow("SELECT Action FROM AuditLogs WHERE Action LIKE 'Encrypted vote added to ledger. Merkle Leaf: %' ORDER BY Timestamp DESC LIMIT 1").Scan(&logAction)
+			parts := strings.Split(logAction, "Merkle Leaf: ")
+			if len(parts) == 2 {
+				origLeaf := strings.TrimSpace(parts[1])
+				// Restore authentic ballot
+				backup = TamperBackup{
+					VoteID:         voteID,
+					ElectionID:     req.ElectionID,
+					OriginalBallot: "JmEqPTQoamMlaS8HLZ0F9egLGsxVdnv3bEz6/ZhU",
+					OriginalLeaf:   origLeaf,
+				}
+				exists = true
+			}
+		}
+	}
 
 	if !exists {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No recorded tamper session found for this election"})

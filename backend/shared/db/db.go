@@ -142,6 +142,8 @@ func seedData() {
 	}{
 		{"voter1", "Alice Voter", "password123", "Voter"},
 		{"voter2", "Bob Voter", "password123", "Voter"},
+		{"voter3", "Carol Voter", "password123", "Voter"},
+		{"voter4", "David Voter", "password123", "Voter"},
 		{"officer1", "Charlie Election Officer", "password123", "ElectionOfficer"},
 		{"admin1", "David Administrator", "password123", "Administrator"},
 		{"counting1", "Emily Counting Authority", "password123", "CountingAuthority"},

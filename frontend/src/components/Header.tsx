@@ -1,12 +1,13 @@
 import React from 'react';
-import type { User } from '../types';
+import type { User, Persona } from '../types';
 
 interface HeaderProps {
   user: User | null;
-  onSwitchPersona: (persona: 'voter1' | 'voter2' | 'officer1' | 'counting1' | 'admin1') => void;
+  onSwitchPersona: (persona: Persona) => void;
   onOpenWalkthrough: () => void;
   onOpenJira: () => void;
   onResetDemo: () => void;
+  onWipeAll?: () => void;
   onOpenManualLogin: () => void;
   onLogout: () => void;
   loading: boolean;
@@ -18,6 +19,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenWalkthrough,
   onOpenJira,
   onResetDemo,
+  onWipeAll,
   onOpenManualLogin,
   onLogout,
   loading,
@@ -72,6 +74,25 @@ export const Header: React.FC<HeaderProps> = ({
           >
             ⚡ Reset Demo
           </button>
+
+          {onWipeAll && (
+            <button
+              onClick={onWipeAll}
+              disabled={loading}
+              className="btn btn-secondary"
+              style={{ 
+                padding: '0.4rem 0.7rem', 
+                fontSize: '0.8rem', 
+                borderColor: 'rgba(239, 68, 68, 0.4)', 
+                background: 'rgba(239, 68, 68, 0.08)',
+                color: '#f87171' 
+              }}
+              data-testid="btn-wipe-all-elections"
+              title="Wipe entire history of old elections and generate a single fresh active demo election"
+            >
+              🗑️ Wipe & Fresh Start
+            </button>
+          )}
         </div>
       </div>
 
@@ -135,6 +156,50 @@ export const Header: React.FC<HeaderProps> = ({
             title="Bob - Eligible Voter"
           >
             <span>👤</span> Voter 2
+          </button>
+
+          <button
+            onClick={() => onSwitchPersona('voter3')}
+            disabled={loading}
+            style={{
+              background: user?.user_id === 'voter3' ? 'rgba(6, 182, 212, 0.25)' : 'transparent',
+              border: `1px solid ${user?.user_id === 'voter3' ? 'var(--secondary)' : 'transparent'}`,
+              color: user?.user_id === 'voter3' ? '#22d3ee' : 'var(--text-secondary)',
+              padding: '0.3rem 0.6rem',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.3rem',
+            }}
+            data-testid="persona-switch-voter3"
+            title="Carol - Eligible Voter"
+          >
+            <span>👤</span> Voter 3
+          </button>
+
+          <button
+            onClick={() => onSwitchPersona('voter4')}
+            disabled={loading}
+            style={{
+              background: user?.user_id === 'voter4' ? 'rgba(6, 182, 212, 0.25)' : 'transparent',
+              border: `1px solid ${user?.user_id === 'voter4' ? 'var(--secondary)' : 'transparent'}`,
+              color: user?.user_id === 'voter4' ? '#22d3ee' : 'var(--text-secondary)',
+              padding: '0.3rem 0.6rem',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.3rem',
+            }}
+            data-testid="persona-switch-voter4"
+            title="David - Eligible Voter"
+          >
+            <span>👤</span> Voter 4
           </button>
 
           <button

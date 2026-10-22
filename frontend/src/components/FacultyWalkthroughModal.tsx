@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
+import type { Persona } from '../types';
 
 interface FacultyWalkthroughModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSwitchPersona: (persona: 'voter1' | 'voter2' | 'officer1' | 'counting1' | 'admin1') => void;
+  onSwitchPersona: (persona: Persona) => void;
   onResetDemo: () => void;
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { User, Election, Candidate, AuditLog, MerkleStatus, BallotReceipt } from './types';
+import type { User, Election, Candidate, AuditLog, MerkleStatus, BallotReceipt, Persona } from './types';
 import { Header } from './components/Header';
 import { ArchitectureDiagram } from './components/ArchitectureDiagram';
 import { VoterView } from './components/VoterView';
@@ -112,7 +112,7 @@ export default function App() {
   };
 
   // Instant Persona Switcher
-  const handleQuickPersonaSwitch = useCallback(async (persona: 'voter1' | 'voter2' | 'officer1' | 'counting1' | 'admin1') => {
+  const handleQuickPersonaSwitch = useCallback(async (persona: Persona) => {
     setLoading(true);
     try {
       const resp = await fetch(`${API_BASE}/auth/login`, {
@@ -213,6 +213,36 @@ export default function App() {
       }
     } catch {
       showNotification("Backend connection error during demo reset.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Wipe all election history and start with a fresh presentation election
+  const handleWipeAllElections = async () => {
+    if (!window.confirm("Are you sure you want to wipe ALL election history and create a fresh presentation election?")) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/demo/wipe`, { method: 'POST' });
+      const data = await resp.json();
+      if (resp.ok) {
+        showNotification(data.message || "All past elections wiped! Fresh presentation election created.", true);
+        setReceipt(null);
+        setMerkleStatus(null);
+        setTalliedResults([]);
+        setSelectedElection(null);
+        setActiveScreen('home');
+        await fetchElections();
+        if (token) {
+          await fetchMe(token);
+        }
+      } else {
+        showNotification(data.error || "Failed to wipe election history.");
+      }
+    } catch {
+      showNotification("Backend connection error during wipe.");
     } finally {
       setLoading(false);
     }
@@ -483,6 +513,7 @@ export default function App() {
         onOpenWalkthrough={() => setWalkthroughOpen(true)}
         onOpenJira={() => setJiraOpen(true)}
         onResetDemo={handleResetDemo}
+        onWipeAll={handleWipeAllElections}
         onOpenManualLogin={() => setManualLoginOpen(true)}
         onLogout={handleLogout}
         loading={loading}
@@ -560,6 +591,7 @@ export default function App() {
                 candidates={candidates}
                 selectedElection={selectedElection}
                 activeScreen={activeScreen}
+                talliedResults={talliedResults}
                 onBackToElections={() => setActiveScreen('home')}
               />
             )}
